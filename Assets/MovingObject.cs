@@ -4,87 +4,100 @@ public class MovingObject : MonoBehaviour
 {
     public enum ObjectType { Crab, Shrimp, Fish }
     public ObjectType objectType;
-
     public float speed = 2f;
+
     private Vector2 direction;
-    private Vector2 screenBounds;
-    private float objectWidth;
-    private float objectHeight;
-    private float timeOffset;
+    private float   timeOffset;
     private Vector3 baseScale;
 
     // Fish 전용
     private Vector3 fishTarget;
-    private float fishWanderTimer;
-    private float fishWanderDur;
-    private float fishBobOffset;
+    private float   fishWanderTimer;
+    private float   fishWanderDur;
+    private float   fishBobOffset;
+
+    // 경계 (매 프레임 갱신)
+    private Camera  cam;
+    private float   halfW, halfH;
+    private float   extX,  extY;   // 오브젝트 절반 크기 (스케일 포함)
 
     void Start()
     {
-        direction = new Vector2(Random.value > 0.5f ? 1 : -1, 0f);
+        cam       = Camera.main;
         baseScale = transform.localScale;
-        Camera cam = Camera.main;
-        screenBounds = cam.ScreenToWorldPoint(new Vector3(Screen.width, Screen.height, cam.transform.position.z));
-        SpriteRenderer sr = GetComponent<SpriteRenderer>();
-        if (sr != null)
-        {
-            objectWidth  = sr.bounds.size.x / 2;
-            objectHeight = sr.bounds.size.y / 2;
-        }
-        timeOffset = Random.Range(0f, 2f * Mathf.PI);
-
-        // Fish 초기화
-        fishBobOffset  = Random.Range(0f, Mathf.PI * 2f);
-        fishWanderDur  = Random.Range(2f, 5f);
+        direction = new Vector2(Random.value > 0.5f ? 1 : -1, 0f);
+        timeOffset    = Random.Range(0f, 2f * Mathf.PI);
+        fishBobOffset = Random.Range(0f, Mathf.PI * 2f);
+        fishWanderDur = Random.Range(2f, 5f);
+        RefreshBounds();
         FishPickTarget();
+    }
+
+    void RefreshBounds()
+    {
+        if (cam == null) return;
+        halfH = cam.orthographicSize;
+        halfW = halfH * cam.aspect;
+
+        // 스프라이트 렌더러 기준 오브젝트 절반 크기
+        var sr = GetComponent<SpriteRenderer>();
+        if (sr != null && sr.sprite != null)
+        {
+            extX = sr.bounds.extents.x;
+            extY = sr.bounds.extents.y;
+        }
+        else
+        {
+            extX = extY = 0.3f;
+        }
     }
 
     void Update()
     {
+        RefreshBounds();
         switch (objectType)
         {
             case ObjectType.Crab:   UpdateCrab();   break;
             case ObjectType.Shrimp: UpdateShrimp(); break;
             case ObjectType.Fish:   UpdateFish();   break;
         }
+        ClampToScreen();
         UpdateFacing();
     }
 
+    // ── 이동 ────────────────────────────────────
     void UpdateCrab()
     {
-        Vector2 pos = transform.position;
+        Vector3 pos = transform.position;
         pos.x += direction.x * speed * Time.deltaTime;
         transform.position = pos;
-        BounceWalls();
+
+        // 벽에 닿으면 반전
+        if (pos.x >= halfW - extX || pos.x <= -halfW + extX)
+            direction.x = -direction.x;
     }
 
     void UpdateShrimp()
     {
-        Vector2 pos = transform.position;
         float angle = Time.time * speed + timeOffset;
-        Vector2 moveDir = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * 0.5f;
-        pos += moveDir * Time.deltaTime;
+        Vector2 moveDir = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle * 0.7f)) * 0.5f;
+        transform.position += (Vector3)(moveDir * Time.deltaTime);
         direction.x = Mathf.Sign(moveDir.x);
-        transform.position = pos;
     }
 
     void UpdateFish()
     {
-        // 목표 지점으로 부드럽게 이동
         Vector3 dir = fishTarget - transform.position;
         dir.z = 0f;
 
         if (dir.magnitude > 0.15f)
             transform.position += dir.normalized * speed * Time.deltaTime;
 
-        // 위아래 너울 bob
         float bob = Mathf.Sin(Time.time * 1.5f + fishBobOffset) * 0.08f;
         transform.position += new Vector3(0f, bob * Time.deltaTime, 0f);
 
-        // 방향 업데이트
         direction.x = dir.x >= 0f ? 1f : -1f;
 
-        // 목표 재설정
         fishWanderTimer += Time.deltaTime;
         if (fishWanderTimer >= fishWanderDur || dir.magnitude < 0.2f)
         {
@@ -96,27 +109,30 @@ public class MovingObject : MonoBehaviour
 
     void FishPickTarget()
     {
-        float margin = 1.2f;
-        float px = Random.Range(-screenBounds.x + margin, screenBounds.x - margin);
-        float py = Random.Range(-screenBounds.y + margin, screenBounds.y - margin);
-        fishTarget = new Vector3(px, py, 0f);
+        // 오브젝트 크기를 고려한 안전 범위 안에서 목표 선택
+        float safeW = Mathf.Max(0f, halfW - extX - 0.1f);
+        float safeH = Mathf.Max(0f, halfH - extY - 0.1f);
+        fishTarget = new Vector3(
+            Random.Range(-safeW, safeW),
+            Random.Range(-safeH, safeH),
+            0f);
     }
 
-    void BounceWalls()
+    // ── 화면 범위 강제 클램프 ───────────────────
+    void ClampToScreen()
     {
-        Vector2 pos = transform.position;
-        if (pos.x > screenBounds.x - objectWidth || pos.x < -screenBounds.x + objectWidth)
-            direction.x = -direction.x;
-        pos.x = Mathf.Clamp(pos.x, -screenBounds.x + objectWidth, screenBounds.x - objectWidth);
-        pos.y = Mathf.Clamp(pos.y, -screenBounds.y + objectHeight, screenBounds.y - objectHeight);
-        transform.position = pos;
+        Vector3 p = transform.position;
+        p.x = Mathf.Clamp(p.x, -halfW + extX, halfW - extX);
+        p.y = Mathf.Clamp(p.y, -halfH + extY, halfH - extY);
+        transform.position = p;
     }
 
+    // ── 좌우 플립 ───────────────────────────────
     void UpdateFacing()
     {
-        if (direction.x == 0) return;
-        Vector3 scale = baseScale;
-        scale.x = Mathf.Abs(baseScale.x) * (direction.x < 0 ? 1 : -1);
-        transform.localScale = scale;
+        if (direction.x == 0f) return;
+        Vector3 s = baseScale;
+        s.x = Mathf.Abs(s.x) * (direction.x < 0f ? 1f : -1f);
+        transform.localScale = s;
     }
 }
